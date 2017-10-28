@@ -9,6 +9,7 @@ import datetime
 import io
 import json
 import os
+import requests
 import riotwatcher
 import sys
 import time
