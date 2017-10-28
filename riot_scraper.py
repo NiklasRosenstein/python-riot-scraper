@@ -2,6 +2,8 @@
 Command-line tool and library to scrape the RiotGames matchlist API.
 """
 
+from __future__ import print_function, division
+
 import argparse
 import datetime
 import io
