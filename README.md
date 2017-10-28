@@ -15,10 +15,9 @@ $ python3 riot_scraper.py <RiotApiKey> euw1:FadingFaces --append --with-timeline
 Doing the same with the Python API:
 
 ```python
-import riot_scraper
-store = riot_scraper.FileStore('FadingFaces.jsonl', append=True)
-riot_scraper.scrape(
-  store,
+from riot_scraper import FileStore, scrape
+scrape(
+  FileStore('FadingFaces.jsonl', append=True),
   '<RiotApiKey>',
   'euw1',
   'FadingFaces'.
