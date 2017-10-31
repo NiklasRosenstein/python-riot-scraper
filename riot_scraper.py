@@ -14,6 +14,8 @@ import riotwatcher
 import sys
 import time
 
+json.JSONDecodeError
+
 
 class Store(object):
   """
@@ -92,6 +94,9 @@ def scrape(store, api_key, region, summoner_name, empty_weeks_to_stop=10,
       if not matches:
         empty_weeks_passed += 1
         continue
+      # Sort by newest first, for consistency with lookback order and the
+      # FileStore --continuous option.
+      matches.sort(key=lambda x: -x['timestamp'])
       if progress_callback:
         event_data = {'beginTime': begin_time, 'matchCount': len(matches)}
         if progress_callback('matchlist', event_data) is False:
@@ -147,27 +152,55 @@ class FileStore(Store):
   Store matches in JSONLine formatted file.
   """
 
-  def __init__(self, file, append=False, close=True):
+  def __init__(self, file, append=False, close=True, continuous=False):
     if isinstance(file, str):
       file = open(file, 'a+' if append else 'w+')
     self._file = file
     self._close = close
     self._matches = set()
+    self._mintime = None
+    self._maxtime = None
+    self._has_newline = True
+    self._continuous = continuous
 
     if append:
       pos = file.tell()
       file.seek(0)
-      for match in (json.loads(l) for l in file):
+      for index, line in enumerate(l.strip() for l in file):
+        if not line: continue
+        try:
+          match = json.loads(line)
+        except json.JSONDecodeError as e:
+          raise ValueError('invalid JSON at line {}: {}'.format(index+1, e))
+        if self._mintime is None or match['gameCreation'] < self._mintime:
+          self._mintime = match['gameCreation']
+        if self._maxtime is None or match['gameCreation'] > self._maxtime:
+          self._maxtime = match['gameCreation']
         self._matches.add(match['gameId'])
+
+      # Check if the file has a newline at the end.
+      file.seek(0, os.SEEK_END)
+      file.seek(file.tell() - 1)
+      if file.read(1) != '\n':
+        self._has_newline = False
       file.seek(pos)
+
+  def suggest_search_intervals(self, account_id):
+    if self._continuous and self._matches:
+      return [(None, self._mintime), (self._maxtime, None)]
+    return [(None, None)]
 
   def has_match(self, match_id, timestamp):
     return match_id in self._matches
 
   def store_match(self, match_id, timestamp, match_data, timeline):
+    if not self._has_newline:
+      self._file.write('\n')
+      self._has_newline = True
     match_data['timeline'] = timeline
     self._file.write(json.dumps(match_data))
     self._file.write('\n')
+    self._file.flush()
     self._matches.add(match_id)
 
 
@@ -181,10 +214,16 @@ parser.add_argument('--output',
   help='Output filename. Defaults to <summoner_name>.jsonl')
 parser.add_argument('--append', action='store_true',
   help='Recognize existing matches in the output file and append new entries.')
-
+parser.add_argument('--cont', '--continuous', action='store_true',
+  help='Assume that matches in the output file are continuous. This is '
+       'enabled by default if --output is not specified, because it assumes '
+       'that only matches for a specific summoner are being downloaded.')
 
 def main():
   args = parser.parse_args()
+  if not args.output and args.append:
+    print('assuming existing data is continuous.')
+    args.continuous = True
   region, summoner_name = args.summoner.partition(':')[::2]
   if not region or not summoner_name:
     print('error: second positional argument must be of the format ')
@@ -192,7 +231,10 @@ def main():
     return 1
   if not args.output:
     args.output = summoner_name + '.jsonl'
-  store = FileStore(args.output, append=args.append)
+  if args.append:
+    print('reading existing data...')
+  store = FileStore(args.output, append=args.append,
+    continuous=args.continuous)
   scrape(store, args.api_key, region, summoner_name,
     with_timeline=args.with_timeline)
 
