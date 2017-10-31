@@ -114,7 +114,12 @@ def scrape(store, api_key, region, summoner_name, empty_weeks_to_stop=10,
         match_data = watcher.match.by_id(region, match_info['gameId'])
         timeline = None
         if with_timeline:
-          timeline = watcher.match.timeline_by_match(region, match_info['gameId'])
+          try:
+            timeline = watcher.match.timeline_by_match(region, match_info['gameId'])
+          except requests.HTTPError as e:
+            if e.response.status_code != 404:  # no timeline data
+              raise
+            timeline = {}  # indicate that no timeline data is present
         store.store_match(
           match_info['gameId'],
           match_info['timestamp'],
