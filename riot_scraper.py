@@ -88,8 +88,11 @@ def scrape(store, api_key, region, summoner_name, empty_weeks_to_stop=10,
           region, summoner['accountId'], begin_time=begin_time,
           end_time=interval[1])['matches']
       except requests.HTTPError as e:
-        if e.response.status_code != 404:  # no matches found
-          raise
+        if e.response.status_code == 400:  # request too far in the past?
+          break
+        if e.response.status_code == 404:  # no matches found
+          continue
+        raise
       interval = (interval[0], begin_time)  # shrink the interval
       if not matches:
         empty_weeks_passed += 1
@@ -97,6 +100,7 @@ def scrape(store, api_key, region, summoner_name, empty_weeks_to_stop=10,
       # Sort by newest first, for consistency with lookback order and the
       # FileStore --continuous option.
       matches.sort(key=lambda x: -x['timestamp'])
+      matches = [m for m in matches if not store.has_match(m['gameId'], m['timestamp'])]
       if progress_callback:
         event_data = {'beginTime': begin_time, 'matchCount': len(matches)}
         if progress_callback('matchlist', event_data) is False:
@@ -104,8 +108,6 @@ def scrape(store, api_key, region, summoner_name, empty_weeks_to_stop=10,
           break
       empty_weeks_passed = 0
       for index, match_info in enumerate(matches):
-        if store.has_match(match_info['gameId'], match_info['timestamp']):
-          continue
         if progress_callback:
           event_data = {'matchIndex': index, 'matchCount': len(matches)}
           if progress_callback('match', event_data) is False:
@@ -147,7 +149,7 @@ def scrape_default_progress_callback(event, data):
 
   if event == 'matchlist':
     date = datetime.datetime.fromtimestamp(data['beginTime'] / 1000)
-    print('Found {} matches in week {}'.format(data['matchCount'], date))
+    print('Found {} unrecorded matches in week {}'.format(data['matchCount'], date))
   elif event == 'match':
     print('  downloading match {}/{}'.format(data['matchIndex']+1, data['matchCount']))
 
@@ -223,12 +225,15 @@ parser.add_argument('--cont', '--continuous', action='store_true',
   help='Assume that matches in the output file are continuous. This is '
        'enabled by default if --output is not specified, because it assumes '
        'that only matches for a specific summoner are being downloaded.')
+parser.add_argument('--discont', '--discontinuous', action='store_true',
+  help='The opposite of --cont, --continuous. Use this flag to disable the '
+       'default --continuous flag when no --output is specified.')
 
 def main():
   args = parser.parse_args()
-  if not args.output and args.append:
+  if not args.output and args.append and not args.discont:
     print('assuming existing data is continuous.')
-    args.continuous = True
+    args.cont = True
   region, summoner_name = args.summoner.partition(':')[::2]
   if not region or not summoner_name:
     print('error: second positional argument must be of the format ')
@@ -238,8 +243,7 @@ def main():
     args.output = summoner_name + '.jsonl'
   if args.append:
     print('reading existing data...')
-  store = FileStore(args.output, append=args.append,
-    continuous=args.continuous)
+  store = FileStore(args.output, append=args.append, continuous=args.cont)
   scrape(store, args.api_key, region, summoner_name,
     with_timeline=args.with_timeline)
 
